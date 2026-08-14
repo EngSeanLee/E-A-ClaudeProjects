@@ -54,6 +54,41 @@ class Broker:
     def get_equity(self) -> float:
         return float(self.get_account().equity)
 
+    def get_target_equity(self) -> float:
+        """
+        Equity to use for ALL position-sizing / allocation / risk math, as
+        opposed to raw account equity.
+
+        Live mode: assumes this account is dedicated to the bot (don't mix
+        it with unrelated manual holdings — see README), so raw equity IS
+        the meaningful number.
+
+        Paper mode: Alpaca hands you a $100,000 fake balance regardless of
+        what you intend to fund the account with, and we only ever deploy
+        ~$500 of it. Using raw equity here would (a) size positions ~200x
+        too big, (b) make the PDT $25k threshold never trigger, and (c)
+        make the daily-loss circuit breaker's % drawdown check nearly
+        untrippable, since a real $250 loss barely dents a $100k balance.
+        So in paper mode we simulate a standalone $500 account: start at
+        the target and apply only the unrealized P&L of positions the bot
+        itself manages (identified by symbol, against CORE_UNIVERSE /
+        SATELLITE_WATCHLIST), ignoring the irrelevant leftover cash pile.
+
+        Known limitation: this only reflects UNREALIZED P&L of currently
+        open bot positions — a same-day stop-loss sell's realized loss
+        won't show up here once the position is closed. Good enough for a
+        v1 bug-catcher, not a substitute for actually watching the account.
+        """
+        if not config.ALPACA_PAPER:
+            return self.get_equity()
+
+        positions = self.get_positions()
+        managed_symbols = set(config.CORE_UNIVERSE) | set(config.SATELLITE_WATCHLIST)
+        bot_unrealized_pl = sum(
+            float(p.unrealized_pl) for sym, p in positions.items() if sym in managed_symbols
+        )
+        return config.ACCOUNT_TARGET_TOTAL + bot_unrealized_pl
+
     def get_positions(self) -> dict:
         """symbol -> position object"""
         return {p.symbol: p for p in self.trading.get_all_positions()}

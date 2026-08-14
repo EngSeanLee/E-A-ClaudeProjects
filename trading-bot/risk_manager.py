@@ -54,19 +54,25 @@ class RiskManager:
     # -- daily loss circuit breaker ------------------------------------------
 
     def _ensure_start_of_day_equity(self):
+        # Uses target equity, not raw account equity — see Broker.get_target_equity().
+        # A paper account sits on a $100k fake balance we never actually deploy
+        # (we only ever risk the $500 target), so baselining the circuit
+        # breaker off raw equity would make the % drawdown check nearly
+        # impossible to trip from this bot's own trades — defeating its
+        # purpose as a bug-catcher.
         record = _load(DAILY_EQUITY_FILE, {})
         if record.get("date") != self.today:
-            equity = self.broker.get_equity()
+            equity = self.broker.get_target_equity()
             record = {"date": self.today, "start_equity": equity}
             _save(DAILY_EQUITY_FILE, record)
-            log.info("New trading day. Start-of-day equity: $%.2f", equity)
+            log.info("New trading day. Start-of-day (target) equity: $%.2f", equity)
         self.start_equity = record["start_equity"]
 
     def check_circuit_breaker(self) -> bool:
         """Returns True if trading is currently allowed, False if halted."""
         if self._halted:
             return False
-        equity = self.broker.get_equity()
+        equity = self.broker.get_target_equity()
         if self.start_equity <= 0:
             return True
         drawdown = (self.start_equity - equity) / self.start_equity
@@ -101,7 +107,11 @@ class RiskManager:
         return sum(1 for t in data["trades"] if date.fromisoformat(t) >= cutoff)
 
     def day_trades_remaining(self) -> int:
-        equity = self.broker.get_equity()
+        # Deliberately uses target equity, not raw account equity — see
+        # Broker.get_target_equity() docstring. Paper accounts default to a
+        # $100k fake balance, which would make this rule never trigger even
+        # though the real account it's modeling is far smaller.
+        equity = self.broker.get_target_equity()
         if equity >= config.PDT_EQUITY_THRESHOLD:
             return 999  # not subject to PDT limits
         data = self._load_day_trades()
@@ -147,8 +157,8 @@ class RiskManager:
             return False, self.halt_reason
         cap = self.max_position_dollars(
             sleeve,
-            self.broker.get_equity() * (config.CORE_ALLOCATION_PCT if sleeve == "core"
-                                         else config.SATELLITE_ALLOCATION_PCT),
+            self.broker.get_target_equity() * (config.CORE_ALLOCATION_PCT if sleeve == "core"
+                                                else config.SATELLITE_ALLOCATION_PCT),
         )
         if dollar_amount > cap:
             return False, f"Order ${dollar_amount:.2f} exceeds per-position cap ${cap:.2f} for {sleeve} sleeve"

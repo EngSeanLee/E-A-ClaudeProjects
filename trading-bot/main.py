@@ -48,7 +48,7 @@ log = logging.getLogger("main")
 
 
 def sleeve_capital(broker, sleeve: str) -> float:
-    equity = broker.get_equity()
+    equity = broker.get_target_equity()
     pct = config.CORE_ALLOCATION_PCT if sleeve == "core" else config.SATELLITE_ALLOCATION_PCT
     return equity * pct
 
